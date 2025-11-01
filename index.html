@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kulinerbot - Ahli Kuliner Indonesia</title>
+    <!-- Memuat Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Menggunakan font Inter */
+        body {
+            font-family: "Inter", sans-serif;
+        }
+        /* Kustomisasi scrollbar */
+        #messages-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        #messages-container::-webkit-scrollbar-track {
+            background: #f1f5f9; /* gray-100 */
+        }
+        #messages-container::-webkit-scrollbar-thumb {
+            background: #94a3b8; /* gray-400 */
+            border-radius: 4px;
+        }
+        #messages-container::-webkit-scrollbar-thumb:hover {
+            background: #64748b; /* gray-500 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex items-center justify-center p-4">
+
+    <div class="flex flex-col w-full max-w-3xl h-full md:h-[90vh] bg-white shadow-2xl rounded-2xl overflow-hidden">
+        
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-red-600 to-red-700 text-white p-5 flex items-center shadow-md z-10">
+            <svg class="w-10 h-10 mr-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 10.001 4.243-4.243a2 2 0 000-2.828l-4.243-4.243a2 2 0 00-2.828 0l-4.243 4.243a2 2 0 000 2.828l4.243 4.243a2 2 0 002.828 0zM12 8v.001z"></path></svg>
+            <div>
+                <h1 class="text-2xl font-bold">Kulinerbot</h1>
+                <p class="text-sm opacity-90">Asisten AI Kuliner Indonesia Anda</p>
+            </div>
+        </header>
+
+        <!-- Area Pesan -->
+        <main id="messages-container" class="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+            <!-- Pesan akan ditambahkan di sini oleh JavaScript -->
+        </main>
+
+        <!-- Area Input -->
+        <footer class="p-4 bg-white border-t border-gray-200">
+            <form id="chat-form" class="flex items-center space-x-3">
+                <input
+                    type="text"
+                    id="message-input"
+                    placeholder="Tanya soal rendang, sate, atau lainnya..."
+                    class="flex-1 px-4 py-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                >
+                <button
+                    type="submit"
+                    class="bg-red-600 text-white p-3 rounded-full hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-300 transform hover:scale-105 active:scale-95"
+                    aria-label="Kirim"
+                >
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                </button>
+            </form>
+        </footer>
+    </div>
+
+    <script>
+        const messagesContainer = document.getElementById('messages-container');
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+
+        // Kunci API (biarkan kosong, akan di-handle oleh environment)
+        const apiKey = "";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        // Konfigurasi sistem dan riwayat obrolan
+        const systemPrompt = "Kamu adalah Kulinerbot, seorang asisten AI yang ramah, antusias, dan ahli dalam kuliner Indonesia. Misi kamu adalah menjawab semua pertanyaan pengguna seputar makanan Indonesia, termasuk resep, sejarah, rekomendasi tempat makan, dan fakta unik. Selalu gunakan bahasa Indonesia yang sopan, bersahabat, dan informatif. Jika kamu tidak tahu jawabannya, katakan terus terang dengan sopan.";
+        
+        let chatHistory = [];
+
+        // --- Fungsi untuk Fetch dengan Exponential Backoff ---
+        /**
+         * Melakukan fetch ke API dengan percobaan ulang (retry) dan exponential backoff.
+         * @param {string} url URL API
+         * @param {object} options Opsi fetch (method, headers, body)
+         * @param {number} retries Jumlah percobaan ulang
+         * @param {number} delay Waktu tunda awal (ms)
+         * @returns {Promise<object>} Hasil JSON dari API
+         */
+        async function fetchWithRetry(url, options, retries = 5, delay = 1000) {
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    // Jika status response bukan OK (misal 500, 503), lempar error untuk retry
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                // Jangan retry untuk error 4xx (client error), tapi log
+                if (error.message.includes("4")) {
+                    console.error("Client error:", error);
+                    throw error; // Lempar error untuk ditangani di `getBotResponse`
+                }
+
+                if (retries > 0) {
+                    // Tunggu sebelum mencoba lagi, dengan delay eksponensial
+                    await new Promise(res => setTimeout(res, delay));
+                    // Panggil lagi dengan retries-1 dan delay*2
+                    return fetchWithRetry(url, options, retries - 1, delay * 2);
+                } else {
+                    // Jika sudah habis percobaan, lempar error
+                    throw new Error("Gagal mengambil data dari API setelah beberapa kali percobaan.");
+                }
+            }
+        }
+
+        // --- Fungsi untuk Menampilkan Pesan ---
+        /**
+         * Menampilkan pesan di antarmuka obrolan.
+         * @param {string} message Teks pesan
+         * @param {string} sender 'user', 'bot', atau 'loading'
+         * @param {string} [id] ID unik untuk elemen (opsional)
+         */
+        function displayMessage(message, sender, id = null) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('flex', 'w-full');
+            
+            if (id) {
+                messageElement.id = id;
+            }
+
+            let bubbleClass = '';
+            let content = '';
+
+            if (sender === 'user') {
+                messageElement.classList.add('justify-end');
+                bubbleClass = 'bg-red-600 text-white';
+                content = message; // Teks biasa untuk pengguna
+            } else if (sender === 'bot') {
+                messageElement.classList.add('justify-start');
+                bubbleClass = 'bg-gray-200 text-gray-800';
+                content = processMarkdown(message); // Proses Markdown untuk bot
+            } else if (sender === 'loading') {
+                messageElement.classList.add('justify-start');
+                bubbleClass = 'bg-gray-200 text-gray-800';
+                content = `<div class="flex items-center space-x-2">
+                                <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style="animation-delay: -0.3s;"></div>
+                                <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style="animation-delay: -0.15s;"></div>
+                                <div class="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
+                           </div>`;
+            }
+
+            messageElement.innerHTML = `
+                <div class="max-w-[80%] p-3 rounded-2xl ${bubbleClass} shadow-sm">
+                    ${content}
+                </div>
+            `;
+
+            messagesContainer.appendChild(messageElement);
+            scrollToBottom();
+        }
+
+        // --- Fungsi untuk Memproses Markdown Sederhana ---
+        /**
+         * Mengubah teks Markdown sederhana (bold, italic, list, newline) menjadi HTML.
+         * @param {string} text Teks Markdown
+         * @returns {string} Teks HTML
+         */
+        function processMarkdown(text) {
+            let html = text;
+            
+            // 1. Bold (**)
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            
+            // 2. Italic (*)
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            
+            // 3. Lists (* atau -)
+            html = html.replace(/^(?:\*|\-)\s+(.*)/gm, '<li>$1</li>');
+            // Bungkus <li> yang berurutan dengan <ul>
+            html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+            // Perbaiki jika ada <ul> bertumpuk yang tidak perlu
+            html = html.replace(/<\/ul>\n?<ul>/g, ''); 
+
+            // 4. Newlines
+            html = html.replace(/\n/g, '<br>');
+
+            // 5. Hapus <br> di dalam <ul>
+            html = html.replace(/<ul><br>/g, '<ul>');
+            html = html.replace(/<br><\/ul>/g, '</ul>');
+            html = html.replace(/<li><br>/g, '<li>');
+            html = html.replace(/<br><\/li>/g, '</li>');
+
+            return html;
+        }
+
+        // --- Fungsi untuk Scroll ke Bawah ---
+        function scrollToBottom() {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // --- Fungsi untuk Mendapatkan Respon Bot ---
+        /**
+         * Mengirim query ke API dan menampilkan hasilnya.
+         * @param {string} query Pertanyaan pengguna
+         */
+        async function getBotResponse(query) {
+            // Tampilkan indikator "mengetik"
+            displayMessage('', 'loading', 'loading-indicator');
+
+            // Tambahkan pesan pengguna ke riwayat
+            chatHistory.push({ role: "user", parts: [{ text: query }] });
+
+            // Siapkan payload untuk API
+            const payload = {
+                contents: chatHistory,
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                generationConfig: {
+                    temperature: 0.7,
+                    topK: 40,
+                }
+            };
+
+            try {
+                const result = await fetchWithRetry(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                // Hapus indikator "mengetik"
+                document.getElementById('loading-indicator')?.remove();
+
+                // Ekstrak teks dari respon
+                const botText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (botText) {
+                    // Tampilkan pesan bot
+                    displayMessage(botText, 'bot');
+                    // Tambahkan respon bot ke riwayat
+                    chatHistory.push({ role: "model", parts: [{ text: botText }] });
+                } else {
+                    // Tangani jika tidak ada teks respon
+                    displayMessage("Maaf, saya tidak bisa merespon saat ini. Coba lagi.", 'bot');
+                }
+
+            } catch (error) {
+                // Hapus indikator "mengetik" jika ada error
+                document.getElementById('loading-indicator')?.remove();
+                
+                console.error("Error fetching bot response:", error);
+                displayMessage("Maaf, terjadi kesalahan saat menghubungi server. Silakan coba lagi nanti.", 'bot');
+            }
+        }
+
+        // --- Event Listener untuk Form ---
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const userQuery = messageInput.value.trim();
+
+            if (userQuery) {
+                displayMessage(userQuery, 'user');
+                messageInput.value = '';
+                getBotResponse(userQuery);
+            }
+        });
+
+        // --- Pesan Selamat Datang ---
+        window.addEventListener('DOMContentLoaded', () => {
+            const welcomeMessage = "Halo! 👋 Saya Kulinerbot. Ada yang bisa saya bantu seputar kuliner Indonesia? Tanyakan apa saja!";
+            displayMessage(welcomeMessage, 'bot');
+            
+            // Tambahkan pesan ini ke riwayat sebagai "model" agar AI tahu konteks awal
+            chatHistory.push({
+                role: "user",
+                parts: [{ text: "Halo" }] // Simulasikan sapaan pengguna
+            });
+            chatHistory.push({
+                role: "model",
+                parts: [{ text: welcomeMessage }]
+            });
+        });
+
+    </script>
+</body>
+</html>
