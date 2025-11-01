@@ -73,13 +73,22 @@
         const messageInput = document.getElementById('message-input');
 
         // Kunci API (biarkan kosong, akan di-handle oleh environment)
-        const apiKey = "";
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        // JANGAN PERNAH MASUKKAN KUNCI API ANDA SECARA LANGSUNG DI SINI JIKA KODE INI BERSIFAT PUBLIK
+        
+        // --- ⬇️ HARAP MASUKKAN KUNCI API GROQ ANDA DI SINI ⬇️ ---
+        const apiKey = "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"; // <-- ⚠️ PASTIIN KUNCI API GROQ ANDA DI SINI!
+        // --- ⬆️ HARAP MASUKKAN KUNCI API GROQ ANDA DI SINI ⬆️ ---
+
+        const apiUrl = `https://api.groq.com/openai/v1/chat/completions`; // URL API Groq
+        const groqModel = "openai/gpt-oss-20b"; // Nama Model Groq
 
         // Konfigurasi sistem dan riwayat obrolan
         const systemPrompt = "Kamu adalah Kulinerbot, seorang asisten AI yang ramah, antusias, dan ahli dalam kuliner Indonesia. Misi kamu adalah menjawab semua pertanyaan pengguna seputar makanan Indonesia, termasuk resep, sejarah, rekomendasi tempat makan, dan fakta unik. Selalu gunakan bahasa Indonesia yang sopan, bersahabat, dan informatif. Jika kamu tidak tahu jawabannya, katakan terus terang dengan sopan.";
         
-        let chatHistory = [];
+        // Riwayat obrolan diinisialisasi dengan system prompt untuk format OpenAI/Groq
+        let chatHistory = [
+            { role: "system", content: systemPrompt }
+        ];
 
         // --- Fungsi untuk Fetch dengan Exponential Backoff ---
         /**
@@ -211,39 +220,37 @@
             // Tampilkan indikator "mengetik"
             displayMessage('', 'loading', 'loading-indicator');
 
-            // Tambahkan pesan pengguna ke riwayat
-            chatHistory.push({ role: "user", parts: [{ text: query }] });
+            // Tambahkan pesan pengguna ke riwayat (format OpenAI)
+            chatHistory.push({ role: "user", content: query });
 
-            // Siapkan payload untuk API
+            // Siapkan payload untuk API Groq (format OpenAI)
             const payload = {
-                contents: chatHistory,
-                systemInstruction: {
-                    parts: [{ text: systemPrompt }]
-                },
-                generationConfig: {
-                    temperature: 0.7,
-                    topK: 40,
-                }
+                model: groqModel,
+                messages: chatHistory,
+                temperature: 0.7,
             };
 
             try {
                 const result = await fetchWithRetry(apiUrl, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}` // Header Otorisasi untuk Groq
+                    },
                     body: JSON.stringify(payload)
                 });
 
                 // Hapus indikator "mengetik"
                 document.getElementById('loading-indicator')?.remove();
 
-                // Ekstrak teks dari respon
-                const botText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                // Ekstrak teks dari respon (format OpenAI)
+                const botText = result.choices?.[0]?.message?.content;
 
                 if (botText) {
                     // Tampilkan pesan bot
                     displayMessage(botText, 'bot');
-                    // Tambahkan respon bot ke riwayat
-                    chatHistory.push({ role: "model", parts: [{ text: botText }] });
+                    // Tambahkan respon bot ke riwayat (format OpenAI)
+                    chatHistory.push({ role: "assistant", content: botText });
                 } else {
                     // Tangani jika tidak ada teks respon
                     displayMessage("Maaf, saya tidak bisa merespon saat ini. Coba lagi.", 'bot');
@@ -254,7 +261,19 @@
                 document.getElementById('loading-indicator')?.remove();
                 
                 console.error("Error fetching bot response:", error);
-                displayMessage("Maaf, terjadi kesalahan saat menghubungi server. Silakan coba lagi nanti.", 'bot');
+                
+                let errorMessage = "Maaf, terjadi kesalahan saat menghubungi server. Silakan coba lagi nanti.";
+                
+                // Cek error spesifik dari Groq/OpenAI (seperti kunci API tidak valid)
+                if (error.message.includes("401")) {
+                     if (apiKey === "") {
+                        errorMessage = "<strong>Kesalahan Otorisasi (401).</strong><br>Kunci API (API Key) Anda masih kosong. Harap masukkan API Key Groq Anda di dalam kode pada variabel `apiKey`.";
+                     } else {
+                        errorMessage = "<strong>Kesalahan Otorisasi (401).</strong><br>Kunci API (API Key) yang Anda masukkan sepertinya tidak valid. Mohon periksa kembali.";
+                     }
+                }
+                
+                displayMessage(errorMessage, 'bot');
             }
         }
 
@@ -275,14 +294,14 @@
             const welcomeMessage = "Halo! 👋 Saya Kulinerbot. Ada yang bisa saya bantu seputar kuliner Indonesia? Tanyakan apa saja!";
             displayMessage(welcomeMessage, 'bot');
             
-            // Tambahkan pesan ini ke riwayat sebagai "model" agar AI tahu konteks awal
+            // Tambahkan pesan ini ke riwayat sebagai "model" (assistant) agar AI tahu konteks awal
             chatHistory.push({
                 role: "user",
-                parts: [{ text: "Halo" }] // Simulasikan sapaan pengguna
+                content: "Halo" // Simulasikan sapaan pengguna (format OpenAI)
             });
             chatHistory.push({
-                role: "model",
-                parts: [{ text: welcomeMessage }]
+                role: "assistant",
+                content: welcomeMessage // Format OpenAI
             });
         });
 
